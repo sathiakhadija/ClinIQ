@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+venv/
+env/
+.venv/
+
+# Environment
+.env
+.env.local
+
+# Data (too large for git — user downloads NHS PDFs locally)
+data/nhs_docs/
+data/chroma/
+
+# IDE
+.DS_Store
+.idea/
+*.swp
+
+# Test cache
+.pytest_cache/
+.ruff_cache/
+.coverage
+
+# Streamlit
+.streamlit/secrets.toml
