@@ -2202,6 +2202,65 @@ For an open-source portfolio project, HF Spaces is unbeatable (free + easy).
 
 ---
 
+## Frontend Architecture
+
+The ClinIQ frontend was rebuilt as a production-grade Streamlit chat interface with a custom HTML/CSS layer over Streamlit's runtime primitives. The backend contract stayed unchanged: `app.py` still loads the Chroma vector store with `load_existing_vector_store()` and calls `ClinIQPipeline.query()` for answers. The frontend is responsible only for presentation, interaction state, timing, and UI metadata.
+
+### CSS injection approach
+
+Streamlit gives a fast Python-native UI runtime, but its default widgets are visually generic and not flexible enough for a distinctive NHS-themed product interface. The app therefore injects one complete CSS design system at startup using `st.markdown(..., unsafe_allow_html=True)`. This single CSS block defines:
+
+- ClinIQ color variables for the dark navy background, NHS blue, cyan highlights, message surfaces, borders, and clinical status colors.
+- Font imports for Inter and JetBrains Mono.
+- Streamlit chrome overrides to hide the default header, menu, toolbar, and footer.
+- Sidebar sizing, message bubble layouts, source cards, confidence rings, typing state, chat input styling, and responsive behavior.
+- The required purposeful animations: `fadeInUp`, `pulseGlow`, `typingDot`, `slideInRight`, `shimmer`, and `confidenceRingFill`.
+
+This approach was chosen over custom Streamlit components because it keeps the app deployable on Hugging Face Spaces with the existing Python-only stack. A React component could offer deeper control, but it would add a separate build pipeline, JavaScript state management, and another failure surface for a portfolio RAG project.
+
+### Typing indicator
+
+The previous implementation used `st.spinner()`, which is functional but generic. The new interface uses `st.empty()` to reserve a placeholder assistant bubble as soon as a user submits a question. That placeholder is filled with custom HTML showing a shimmer retrieval bar and three cyan typing dots. Once the backend returns, the same placeholder is replaced with the final assistant response. This makes system state clear: ClinIQ is searching the vector index and waiting for generation.
+
+### Confidence score proxy
+
+The backend pipeline returns an answer and a deduplicated list of source citations, but it does not expose raw Chroma similarity scores. The frontend therefore uses the requested proxy:
+
+`score = min(100, (number_of_sources_with_page_numbers / TOP_K) * 100 + 20)`
+
+The score rewards answers with multiple concrete citations and page numbers. It is useful as a retrieval-completeness signal, not a clinical accuracy metric. A production system should use actual vector similarity scores, reranker confidence, citation coverage, and possibly answer-grounding scores from an evaluator.
+
+### SVG confidence ring
+
+The confidence ring is rendered inline as SVG HTML inside each assistant message. It uses a circular track plus a foreground stroke with `stroke-dasharray="100"` and a calculated `stroke-dashoffset`. Scores above 70 use success green, scores from 40 to 70 use amber, and scores below 40 use red. The `confidenceRingFill` animation communicates that the confidence value has just been calculated for the completed response.
+
+### Session state model
+
+Each chat message is stored in `st.session_state.messages` with a complete display structure:
+
+- `role`: `user` or `assistant`
+- `content`: the rendered text
+- `timestamp`: `HH:MM`
+- `sources`: assistant citation dictionaries
+- `confidence`: frontend proxy score
+- `response_time`: milliseconds from query start to answer completion
+- `chunks_retrieved`: number of retrieved chunks used for display metadata
+- `total_tokens`: an estimate, because token usage is not exposed by the current backend response
+
+The sidebar example buttons set `st.session_state.pending_question`, which is submitted through the same `process_user_query()` path as normal chat input. That keeps examples and typed questions behaviorally identical.
+
+### Design decisions
+
+The dark navy theme was chosen to make the app feel more like a focused clinical intelligence tool than a default demo. NHS blue is used for primary actions and source accents to preserve institutional familiarity, while cyan is reserved for active states, retrieval feedback, and confidence highlights. The animations are restrained and functional: shimmer means retrieval is underway, typing dots mean generation is pending, source cards slide in to show evidence has arrived, and the confidence ring fill marks completion of scoring.
+
+The sidebar is fixed at 320px so system status, examples, workflow steps, and the disclaimer remain predictable. The main column is capped at 900px to keep clinical answers readable and prevent long line lengths on wide displays.
+
+### Production improvements
+
+A production version would replace the current request/response flow with WebSocket or token streaming so users can see answers form progressively. It would expose true retrieval similarity scores from the backend rather than using citation count as a proxy. It would persist sessions and user feedback to a database, support authenticated users, and log structured frontend events. It would also add accessibility testing, source-preview deep links into PDFs, and a stronger clinical safety layer for out-of-scope or high-risk queries.
+
+---
+
 **End of implementation.md**
 
 This document is the complete technical reference for ClinIQ. It covers the entire system from architecture to deployment, including trade-offs and decisions. Every reader should be able to understand why each component was chosen and how they fit together.
