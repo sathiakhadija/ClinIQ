@@ -17,8 +17,8 @@ RUN mkdir -p data/nhs_docs data/chroma
 # Set Python path
 ENV PYTHONPATH=/app
 
-# Expose port for Streamlit
-EXPOSE 8501
+# Expose Hugging Face Spaces port
+EXPOSE 7860
 
 # Run Streamlit app
-CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true"]
+CMD ["streamlit", "run", "app.py", "--server.port=7860", "--server.address=0.0.0.0", "--server.headless=true"]
