@@ -6,11 +6,22 @@ Loads the vector store on startup and processes queries in real-time.
 """
 
 import os
+import sys
 import logging
 from pathlib import Path
 from dotenv import load_dotenv
 
 import streamlit as st
+from streamlit.runtime.scriptrunner import get_script_run_ctx
+
+if __name__ == "__main__":
+    logging.getLogger("streamlit.runtime.scriptrunner_utils.script_run_context").setLevel(
+        logging.ERROR
+    )
+
+if __name__ == "__main__" and get_script_run_ctx() is None:
+    print("ClinIQ is a Streamlit app. Start it with: streamlit run app.py")
+    sys.exit(1)
 
 from src.ingestion import load_existing_vector_store
 from src.pipeline import ClinIQPipeline
