@@ -2261,6 +2261,54 @@ A production version would replace the current request/response flow with WebSoc
 
 ---
 
+## Fix: HTML Rendering on Hugging Face Spaces (2026-05-30)
+
+### Problem
+
+The original `render_assistant_message()` and `render_user_message()` functions returned fully composed HTML strings, which `display_messages()` and `process_user_query()` then passed to `st.markdown(..., unsafe_allow_html=True)`. On local Streamlit this worked: the HTML was injected into the DOM and the browser rendered it. On Hugging Face Spaces the same calls displayed raw HTML tag strings — literal `<div class="clq-assistant-bubble">...` visible as text in the chat window. Users saw the structure of the markup, not the rendered output.
+
+### Why `unsafe_allow_html` fails on Hugging Face Spaces
+
+Hugging Face Spaces proxies Streamlit through a sandboxed iframe layer. In that environment Streamlit applies a stricter HTML sanitization pass before injecting markdown content. Complex nested structures — especially those with inline `style` attributes, SVG elements, `<details>`/`<summary>`, and CSS animation properties — are stripped or escaped. The result is that `unsafe_allow_html=True` no longer bypasses the sanitizer; the raw string lands in the DOM as text. Simpler wrappers (a single `<div class="name">`) tend to survive; deeply nested structures do not.
+
+### Fix: Layered rendering with `st.components.v1.html()`
+
+The fix replaces the HTML-string rendering functions with Streamlit-native rendering that uses three separate primitives instead of one monolithic block.
+
+**User messages** now use `st.chat_message("user")` as a context manager with `st.markdown(content)` and `st.caption(timestamp)` inside. No HTML is produced; Streamlit renders the native chat bubble.
+
+**Assistant messages** now use `st.chat_message("assistant")` as a context manager with layered content inside:
+
+1. `st.markdown('<span class="clq-answer-label">Guideline answer</span>', unsafe_allow_html=True)` — a single minimal span that the sanitizer passes through.
+2. `st.components.v1.html(ring_html, height=50)` — the SVG confidence ring. `components.html()` renders its content into a sandboxed `<iframe>` that is not subject to Streamlit's markdown sanitizer. This is the key primitive for arbitrary HTML.
+3. `st.markdown(content)` with no `unsafe_allow_html` — the actual answer text rendered as natural markdown, giving the LLM's output proper heading, bold, and bullet formatting.
+4. `st.components.v1.html(stats_html, height=40)` — the stats bar (response time, chunk count, token count).
+5. `st.components.v1.html(source_cards_html, height=card_height)` — the collapsible source cards with NICE references and excerpts.
+6. `st.caption(timestamp)` — the message timestamp.
+
+### CSS inside iframes
+
+`st.components.v1.html()` renders inside a sandboxed iframe. CSS variables defined in the parent page (`--cliniq-navy`, `--cliniq-blue`, etc.) are not accessible from inside the iframe. The fix defines two module-level CSS constant strings, `_STATS_IFRAME_CSS` and `_SOURCES_IFRAME_CSS`, with the parent variables resolved to their raw hex values. These are prepended to each HTML string passed to `components.html()`. Similarly, `render_confidence_ring()` was updated to use hardcoded hex colors (`#00C48C`, `#FFB020`, `#FF4757`) instead of CSS variable references.
+
+### Typing indicator
+
+The typing indicator was updated to use `with placeholder.container():` instead of `placeholder.markdown()`. This prepares the placeholder slot so that after the pipeline returns, `placeholder.empty()` clears it cleanly and the subsequent `_display_assistant_message()` call renders the response at the correct position in the layout.
+
+### `display_messages()` alignment
+
+`display_messages()` was updated to use the same `_display_user_message()` and `_display_assistant_message()` functions as `process_user_query()`. Previously it called the HTML-string functions. Now historical messages from session state are rendered through exactly the same path as new messages, so replaying a conversation after reload produces identical output to the original render.
+
+### Why `st.components.v1.html()` is more reliable than `unsafe_allow_html`
+
+| Approach | How it works | Fails when |
+|----------|-------------|------------|
+| `unsafe_allow_html=True` | Streamlit injects HTML into its own React component tree; the platform may sanitize it | Platform applies a sanitizer (Hugging Face Spaces, some hosted deployments) |
+| `st.components.v1.html()` | Renders into a dedicated `<iframe>` that Streamlit does not sanitize | The iframe has no access to parent CSS variables or fonts (must be inlined) |
+
+For SVG, `<details>`, CSS animations, and any other markup that a sanitizer might strip, `components.html()` is the correct primitive. For text that benefits from Streamlit's own markdown formatting, `st.markdown()` without `unsafe_allow_html` is preferable. The layered pattern uses each tool only where it is most reliable.
+
+---
+
 **End of implementation.md**
 
 This document is the complete technical reference for ClinIQ. It covers the entire system from architecture to deployment, including trade-offs and decisions. Every reader should be able to understand why each component was chosen and how they fit together.

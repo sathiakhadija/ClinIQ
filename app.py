@@ -15,11 +15,43 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 import streamlit as st
+import streamlit.components.v1 as components
 
 from src.ingestion import load_existing_vector_store
 from src.pipeline import ClinIQPipeline
 
 load_dotenv()
+
+# Inline CSS for st.components.v1.html iframes (CSS variables not available inside iframes)
+_STATS_IFRAME_CSS = """
+body { margin: 0; padding: 0; background: transparent; }
+.clq-stats-bar {
+    display: flex; align-items: center; gap: 0.65rem; flex-wrap: wrap;
+    border-top: 1px solid #2A3F5F; border-bottom: 1px solid #2A3F5F;
+    padding: 0.55rem 0; color: #8B9BB4;
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+}
+.clq-stat-divider { display: inline-block; width: 1px; height: 14px; background: #2A3F5F; }
+"""
+
+_SOURCES_IFRAME_CSS = """
+body { margin: 0; padding: 0; background: transparent; font-family: 'Inter', sans-serif; color: #F0F4F8; }
+details { border-radius: 8px; }
+summary { cursor: pointer; color: #F0F4F8; font-size: 13px; font-weight: 500; margin-bottom: 0.65rem; }
+.clq-source-card {
+    position: relative; background: #243550; border: 1px solid #2A3F5F;
+    border-radius: 8px; padding: 0.8rem 0.85rem 0.8rem 1rem;
+    margin-bottom: 0.65rem; overflow: hidden;
+}
+.clq-source-card::before {
+    content: ''; position: absolute; inset: 0 auto 0 0; width: 4px; background: #005EB8;
+}
+.clq-source-title { color: #F0F4F8; font-size: 13px; font-weight: 600; margin-bottom: 0.25rem; }
+.clq-source-meta { display: flex; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 0.35rem; }
+.clq-source-ref { color: #00D4FF; font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+.clq-source-page { color: #8B9BB4; font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+.clq-source-excerpt { color: #8B9BB4; font-size: 12px; font-style: italic; line-height: 1.5; }
+"""
 
 logging.basicConfig(
     level=logging.INFO,
@@ -702,47 +734,46 @@ def load_vector_store_and_pipeline():
 def render_typing_indicator(placeholder):
     """Render animated retrieval and typing state into a placeholder."""
     chunks = f"{st.session_state.indexed_chunks:,}"
-    placeholder.markdown(
-        f"""
-        <div class="clq-message-row clq-assistant-row">
-          <div class="clq-message-stack clq-assistant-stack">
-            <div class="clq-assistant-bubble">
-              <div class="clq-retrieval-bar">Searching {chunks} chunks...</div>
-              <div class="clq-typing-wrap">
-                <div class="clq-typing-dots">
-                  <span class="clq-typing-dot"></span>
-                  <span class="clq-typing-dot"></span>
-                  <span class="clq-typing-dot"></span>
-                </div>
-                <span class="clq-typing-copy">retrieving guideline evidence</span>
+    with placeholder.container():
+        st.markdown(
+            f"""
+            <div class="clq-retrieval-bar">Searching {chunks} chunks...</div>
+            <div class="clq-typing-wrap">
+              <div class="clq-typing-dots">
+                <span class="clq-typing-dot"></span>
+                <span class="clq-typing-dot"></span>
+                <span class="clq-typing-dot"></span>
               </div>
+              <span class="clq-typing-copy">retrieving guideline evidence</span>
             </div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 def render_confidence_ring(score):
-    """Return an inline SVG confidence ring for the proxy retrieval score."""
+    """Return an inline SVG confidence ring for the proxy retrieval score.
+
+    Uses hardcoded hex values so the SVG renders correctly inside an iframe
+    (st.components.v1.html) where CSS variables from the parent page are absent.
+    """
     safe_score = max(0, min(100, int(score)))
     dash_offset = 100 - safe_score
     if safe_score > 70:
-        color = "var(--cliniq-success)"
+        color = "#00C48C"
     elif safe_score >= 40:
-        color = "var(--cliniq-warning)"
+        color = "#FFB020"
     else:
-        color = "var(--cliniq-danger)"
+        color = "#FF4757"
 
     return f"""
     <svg width="40" height="40" viewBox="0 0 40 40" role="img" aria-label="Confidence {safe_score}%">
-      <circle cx="20" cy="20" r="15.9" fill="none" stroke="var(--cliniq-border)" stroke-width="4"></circle>
+      <circle cx="20" cy="20" r="15.9" fill="none" stroke="#2A3F5F" stroke-width="4"></circle>
       <circle cx="20" cy="20" r="15.9" fill="none" stroke="{color}" stroke-width="4"
         stroke-dasharray="100" stroke-dashoffset="{dash_offset}"
         stroke-linecap="round" transform="rotate(-90 20 20)"
         style="animation: confidenceRingFill 1s ease-out;"></circle>
-      <text x="20" y="23" text-anchor="middle" fill="var(--cliniq-text)"
+      <text x="20" y="23" text-anchor="middle" fill="#F0F4F8"
         font-family="JetBrains Mono, monospace" font-size="9" font-weight="500">{safe_score}%</text>
     </svg>
     """
@@ -815,19 +846,14 @@ def render_stats_bar(response_time, chunks_retrieved, total_tokens):
     """
 
 
-def render_user_message(content, timestamp):
-    """Return a right-aligned user message bubble."""
-    return f"""
-    <div class="clq-message-row clq-user-row">
-      <div class="clq-message-stack clq-user-stack">
-        <div class="clq-user-bubble">{_format_text(content)}</div>
-        <div class="clq-timestamp">{html.escape(timestamp)}</div>
-      </div>
-    </div>
-    """
+def _display_user_message(content, timestamp):
+    """Render a user message using the native chat_message context manager."""
+    with st.chat_message("user"):
+        st.markdown(content)
+        st.caption(timestamp)
 
 
-def render_assistant_message(
+def _display_assistant_message(
     content,
     confidence,
     response_time,
@@ -835,25 +861,42 @@ def render_assistant_message(
     total_tokens,
     sources,
     timestamp,
+    chunks=None,
 ):
-    """Return a left-aligned assistant response with confidence, stats, and sources."""
-    source_cards = render_source_cards(sources, [])
-    return f"""
-    <div class="clq-message-row clq-assistant-row">
-      <div class="clq-message-stack clq-assistant-stack">
-        <div class="clq-assistant-bubble">
-          <div class="clq-answer-head">
-            <span class="clq-answer-label">Guideline answer</span>
-            {render_confidence_ring(confidence)}
-          </div>
-          <div class="clq-answer-text">{_format_text(content)}</div>
-          {render_stats_bar(response_time, chunks_retrieved, total_tokens)}
-          {source_cards}
-        </div>
-        <div class="clq-timestamp">{html.escape(timestamp)}</div>
-      </div>
-    </div>
+    """Render an assistant response using layered Streamlit primitives.
+
+    - st.markdown() with unsafe_allow_html for minimal structural wrappers only.
+    - st.markdown() without unsafe_allow_html for answer text (natural markdown).
+    - st.components.v1.html() for SVG ring, stats bar, and source cards.
     """
+    with st.chat_message("assistant"):
+        st.markdown('<span class="clq-answer-label">Guideline answer</span>', unsafe_allow_html=True)
+
+        ring_svg = render_confidence_ring(confidence)
+        components.html(
+            f"<style>body{{margin:0;background:transparent;}} "
+            f"@keyframes confidenceRingFill{{from{{stroke-dashoffset:100;}}}}</style>"
+            f"{ring_svg}",
+            height=50,
+        )
+
+        with st.container():
+            st.markdown(content)
+
+        components.html(
+            f"<style>{_STATS_IFRAME_CSS}</style>"
+            f"{render_stats_bar(response_time, chunks_retrieved, total_tokens)}",
+            height=40,
+        )
+
+        source_cards_html = render_source_cards(sources, chunks or [])
+        card_height = max(80, len(sources) * 120 + 60) if sources else 80
+        components.html(
+            f"<style>{_SOURCES_IFRAME_CSS}</style>{source_cards_html}",
+            height=card_height,
+        )
+
+        st.caption(timestamp)
 
 
 def render_sidebar():
@@ -976,32 +1019,24 @@ def render_welcome_state():
 
 
 def display_messages():
-    """Render all messages from session state as custom HTML."""
+    """Render all messages from session state using Streamlit-native primitives."""
     if not st.session_state.messages:
         render_welcome_state()
         return
 
-    st.markdown('<div class="clq-chat-list">', unsafe_allow_html=True)
     for message in st.session_state.messages:
         if message["role"] == "user":
-            st.markdown(
-                render_user_message(message["content"], message["timestamp"]),
-                unsafe_allow_html=True,
-            )
+            _display_user_message(message["content"], message["timestamp"])
         else:
-            st.markdown(
-                render_assistant_message(
-                    message["content"],
-                    message.get("confidence", 20),
-                    message.get("response_time", 0),
-                    message.get("chunks_retrieved", 0),
-                    message.get("total_tokens", 0),
-                    message.get("sources", []),
-                    message.get("timestamp", ""),
-                ),
-                unsafe_allow_html=True,
+            _display_assistant_message(
+                message["content"],
+                message.get("confidence", 20),
+                message.get("response_time", 0),
+                message.get("chunks_retrieved", 0),
+                message.get("total_tokens", 0),
+                message.get("sources", []),
+                message.get("timestamp", ""),
             )
-    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def process_user_query(user_input):
@@ -1018,7 +1053,7 @@ def process_user_query(user_input):
             "timestamp": user_timestamp,
         }
     )
-    st.markdown(render_user_message(question, user_timestamp), unsafe_allow_html=True)
+    _display_user_message(question, user_timestamp)
 
     placeholder = st.empty()
     render_typing_indicator(placeholder)
@@ -1047,17 +1082,16 @@ def process_user_query(user_input):
             "timestamp": timestamp,
         }
         st.session_state.messages.append(assistant_message)
-        placeholder.markdown(
-            render_assistant_message(
-                answer,
-                confidence,
-                response_time,
-                len(retrieved_chunks),
-                total_tokens,
-                sources,
-                timestamp,
-            ),
-            unsafe_allow_html=True,
+        placeholder.empty()
+        _display_assistant_message(
+            answer,
+            confidence,
+            response_time,
+            len(retrieved_chunks),
+            total_tokens,
+            sources,
+            timestamp,
+            chunks=retrieved_chunks,
         )
 
     except Exception as exc:
@@ -1076,17 +1110,15 @@ def process_user_query(user_input):
             "timestamp": timestamp,
         }
         st.session_state.messages.append(assistant_message)
-        placeholder.markdown(
-            render_assistant_message(
-                error_message,
-                0,
-                response_time,
-                len(retrieved_chunks),
-                0,
-                [],
-                timestamp,
-            ),
-            unsafe_allow_html=True,
+        placeholder.empty()
+        _display_assistant_message(
+            error_message,
+            0,
+            response_time,
+            len(retrieved_chunks),
+            0,
+            [],
+            timestamp,
         )
 
 
@@ -1111,15 +1143,6 @@ def main():
     user_input = st.chat_input("Ask me about NHS clinical guidelines...")
     if user_input:
         process_user_query(user_input)
-
-
-def _format_text(value):
-    """Escape and lightly format newline-separated model text as HTML paragraphs."""
-    escaped = html.escape(str(value))
-    paragraphs = [part.strip() for part in escaped.split("\n") if part.strip()]
-    if not paragraphs:
-        return ""
-    return "".join(f"<p>{part}</p>" for part in paragraphs)
 
 
 def _extract_nice_reference(filename):
